@@ -1,0 +1,4 @@
+model gait,Delta_phase_1_2 (cycle),Delta_phase_2_3 (cycle),Delta_phase_3_4 (cycle)
+trot,0.5,0.5,0.5
+walk,0.25,0.5,0.75
+pace,0,0.5,0
