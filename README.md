@@ -1,4 +1,6 @@
-# Gait space clusterer for multilegged locomotion -- see GaitSpaceClusterer Metadata.pdf for details about file descriptions, naming conventions, and usage.
+# Gait space clusterer for multilegged locomotion 
+
+# See GaitSpaceClusterer Metadata.pdf for details about file descriptions, naming conventions, and usage.
 
 Uses phase differences between legs and gait space metrics to classify datasets of animal leg motions into clusters (see Ref. 1 below for details).
 
