@@ -3,7 +3,7 @@ Uses phase differences between legs and gait space metrics to classify datasets 
 
 MATLAB code and samples data are provided. python versions are under development.
 
-$$\bf See-GaitSpaceClusterer-Metadata.pdf-for-details-about-file-descriptions,-naming conventions,-and usage. **
+$$\bf See-GaitSpaceClusterer-Metadata.pdf-for-details-about-file-descriptions,-naming conventions,-and usage. $$
 
 References to cite if you use this code:
 
