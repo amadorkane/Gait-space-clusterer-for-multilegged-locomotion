@@ -1,9 +1,9 @@
-# Gait-Space-Clusterer
+# Gait space clusterer for multilegged locomotion
 Uses phase differences between legs and gait space metrics to classify datasets of animal leg motions into clusters (see Ref. 1 below for details).
 
 MATLAB code and samples data are provided. python versions are under development.
 
-See GaitSpaceClusterer Metadata.pdf for details about file descriptions, naming conventions, and usage.
+$$\bf See GaitSpaceClusterer Metadata.pdf for details about file descriptions, naming conventions, and usage.$$
 
 References to cite if you use this code:
 
