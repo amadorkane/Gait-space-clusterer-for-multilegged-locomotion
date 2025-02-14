@@ -19,9 +19,12 @@
 % foremost right leg
 %
 % Input parameters:
-% smoothing window in millisec for computing time derivaties as slopes
+% > smoothing window in millisec for computing time derivaties as slopes
 % flag to choose whether +y is up or down on the image, depending on
 % tracking convention (program can flip to correct)
+% > framerate of original video
+% > whether the upward direction on the original video) corresponds to +y
+% or -y (different image analysis conventions)
 %
 % Output: 
 % (corefilename)_phasediff.csv file with phase differences between Nlegs-1
@@ -29,7 +32,7 @@
 
 %% Initialization
 close all; clear all; clc;
-
+polyorder = 2;              % use quadratic polynomial in computing slopes
 %---------------------
 % video & data analysis
 framerate = 500;            % video framerate = sampling frequency
@@ -121,12 +124,58 @@ end
 % foot along the cranial-caudal axis in the body fixed frame
 Footy_cc(:,:) = FootXY(:,2,:);
 
-%% compute, analyze & plot oscillation phase for each leg
-polyorder = 2;              % use quadratic polynomial in computing slopes
+%% compute velocity along the +y cranial-caudal direction for each leg
+% using quadratic polynomial local fits
 for j = 1:Nlegs
-    % first compute velocity along the +y cranial-caudal direction for each leg
     FootvY_cc(:,j) = movingslope(FootXY(:,2,j),smoothwindow,polyorder,dt);
+end
 
+%% plot y and vy vs time
+keepgoing = 1;
+while keepgoing
+    figure('Position',[10 50 1400 900]);
+    tiledlayout(Nlegs,2,'TileSpacing','compact','Padding','compact');
+    for j = 1:Nlegs
+        nexttile;
+        plot(1:nframes,normalize(Footy_cc(:,j)));
+        ylabel(['y leg ',num2str(j)]);
+        nexttile;
+        plot(1:nframes,normalize(FootvY_cc(:,j)));
+        ylabel(['v_y leg ',num2str(j)]);
+    end
+    xlabel('frame');
+    % select whether or not to compute using a limited range of the input
+    % data -- phase differences only make sense if you have an oscillatory
+    % signal, because in the next step we're going to use a normalized
+    % signal
+    answer = questdlg('The y and v_y data must be oscillatory for phase difference analysis--select new first and last frames?', ...
+    	'Choices', ...
+    	'Yes','No','No');
+    switch answer
+        case 'Yes'
+            prompt = {'first frame:','last frame:'};
+            dlgtitle = 'Data must be oscillatory for phase differences to make sense';
+            fieldsize = [1 40];
+            definput = {num2str(1),num2str(nframes)};
+
+            answer = inputdlg(prompt,dlgtitle,fieldsize,definput);
+
+            firstframe      = str2num(answer{1});
+            lastframe       = str2num(answer{2});
+            % select only frames of interest where the data is oscillatory
+            if firstframe ~= 1 || lastframe ~= nframes
+                Footy_cc    = Footy_cc(firstframe:lastframe,:);
+                FootvY_cc   = FootvY_cc(firstframe:lastframe,:);
+            end
+            nframes = size(Footy_cc,1);
+            clf;
+        otherwise
+            keepgoing = 0;
+    end
+end
+%% compute, analyze & plot oscillation phase for each leg
+
+for j = 1:Nlegs
     % Compute phase angle from standardized values of the position and
     % velocity in the comoving frame where each canonical variable is
     % computed along the direction of COM velocity at each instant of time;

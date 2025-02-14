@@ -43,6 +43,9 @@
 
 %% initialization
 clear all; close all; clc;
+Nlegs = 8;                      % default number of legs
+
+plot_model_gait = 1; showpolarplots = 1;
 
 %% get phase difference spreadsheet
 [datafile, filepath] = uigetfile('*.*','Select phase difference file (1st row = header)');
@@ -58,8 +61,8 @@ clustertree = fullfile(filepath,[corefilename,'tree.png']);
 inputdata = readcell(datafilename);
 
 % get number of legs
-prompt = {'Number of legs in file ',corefilename,'?'};
-answer = inputdlg(prompt,'',[1 40],{'4'});
+prompt = {'Number of legs in file?'};
+answer = inputdlg(prompt,'',[1 40],{num2str(Nlegs)});
 
 % number of legs for which gaits were analyzed
 Nlegs = str2num(answer{1});
@@ -155,24 +158,50 @@ else
     cluster_statistics = addvars(cluster_statistics,numclustersamples','Before',1,'NewVariableNames','number samples');
     
     % add column with cluster number
-    Cluster = [1:nclusters]';
+    Cluster = (1:nclusters)';
     cluster_statistics = addvars(cluster_statistics,Cluster,'Before',1);
-    
+
+    disp(corefilename);
     disp(cluster_statistics);
-    
-    % %% print out the cluster centers
-    % fprintf('cluster phase difference (cycle) mean [95%% CI] angular deviation\n');
-    % for i = 1:nclusters
-    %     for j = 1:size(data_to_cluster,2)
-    %         fprintf('%3.3f [%3.3f, %3.3f], %3.3f ',...
-    %             cluster_center(i,j),cluster_ll(i,j),cluster_ul(i,j),cluster_ul(i,j));
-    %     end
-    %     fprintf('\n');
-    % end
-    % 
-    % for i = 1:nclusters
-    %     fprintf('number samples in cluster %i = %5.0f\n',i,sum(idxcluster == i))
-    % end
+
+    %% plot cluster phase difference distributions
+    if showpolarplots
+        tilenumbers = [1:2:Nlegs 2:2:Nlegs];
+        modelgaitdata = 0.5*ones(nclusters,Nlegs-1);
+        for i = 1:nclusters
+            % initialize polar plots
+            figure('Color','white','Position',[10 50 600 900]);
+            t_circ = tiledlayout(ceil(Nlegs/2),2,'TileSpacing','loose' ,'Padding','loose');
+            % phase differences for this treatment and cluster to plot
+            osc_phase_diff = data_to_cluster(idxcluster == i,:);
+
+            %% plot oscillation differences as polar histogram plots
+            % show the mean and distribution along with values for the two
+            % idealized gaits
+            % for each phase difference, plot its phase differences in
+            % radians two ways
+            for ik = 1:Nlegs-1
+                nexttile(tilenumbers(ik));
+                nbins = 20;  % 360 deg/20 = 18 deg wide bins
+                [h1,mean_radius] = circ_plot(2*pi*osc_phase_diff(:,ik),...
+                    'hist',[],nbins,true,true,'linewidth',4,'color','b');
+                ylabel(['\Delta\phi_{' num2str(ik) '}'],"Rotation",0);
+                hold on;
+                if plot_model_gait
+                    line([0,mean_radius*cos(2*pi*modelgaitdata(i,ik))],...
+                        [0,mean_radius*sin(2*pi*modelgaitdata(i,ik))],'color','r',...
+                        'linewidth',3);
+                end
+            end
+            circularPlotTitleText = [strrep(corefilename,'_',' ') ' cluster ',num2str(i)];
+            title(t_circ,circularPlotTitleText,'FontSize',14);
+        end
+        %% plot cluster ID vs frame number
+        figure;
+        plot(idxcluster,'o');
+        ylabel('cluster id');xlabel('frame');
+
+    end
 end
 %% end of main program
 
@@ -739,3 +768,278 @@ function kappa = circ_kappa(alpha,w)
     end
 end
 %% ************************************************************************
+%% ************************************************************************
+function [axis_handle,mean_radius] = circ_plot(alpha, format, formats, varargin)
+%
+% r = circ_plot(alpha, ...)
+%   Plotting routines for circular data.
+%
+%   Input:
+%     alpha     sample of angles in radians
+%     [format		specifies style of plot
+%                 pretty, histogram, density, []
+%     [formats  standard matlab string for plot format (like '.r');
+%       OK to leave as [] for histogram]
+%
+%     The different plotting styles take optional arguments:
+%         pretty:   fourth argument toggles between showing mean direction
+%                     and not showing it
+%         hist:     fourth argument (varargin{1}) determines number of bins/bin centers
+%                   fifth argument  (varargin{2}) determines whether normalized or count
+%                     histogram is shown
+%                   sixth argument  (varargin{3}) toggles between showing mean direction
+%                     and not showing it
+%
+%       All of these arguments can be left empty, i.e. set to [], so that
+%       the default value will be used. If additional arguments are
+%       supplied in the name-value style ('linewidth', 2, ...), these are
+%       used to change the properties of the mean resultant vector plot.
+%
+%   Output:
+%     a         axis handle
+%
+%   Examples:
+%     alpha = randn(60,1)*.4+pi/2;
+%     figure
+%     subplot(2,2,1)
+%     circ_plot(alpha,'pretty','ro',true,'linewidth',2,'color','r'),
+%     title('pretty plot style')
+%     subplot(2,2,2)
+%     circ_plot(alpha,'hist',[],20,true,true,'linewidth',2,'color','r')
+%     title('hist plot style')
+%     subplot(2,2,3)
+%     circ_plot(alpha,[],'s')
+%     title('non-fancy plot style')
+%
+%
+% Circular Statistics Toolbox for Matlab
+
+% By Philipp Berens & Marc J. Velasco, 2009
+% velasco@ccs.fau.edu, berens@tuebingen.mpg.de
+
+if nargin < 2 || isempty(format)
+    format = '';
+end
+
+
+switch format
+    case 'pretty'
+        % plot in 'pretty style'
+        % draws unit circle and marks points around the circle
+        % adds optionally the mean resultant vector
+
+        if nargin < 3|| isempty(formats)
+            formats = 'o';
+        end
+
+        % convert angles to unit vectors
+        z = exp(1i*alpha);
+
+        % create unit circle
+        zz = exp(1i*linspace(0, 2*pi, 101));
+
+        plot(real(z), imag(z), formats, real(zz), imag(zz), 'k', [-2 2], [0 0], 'k:', [0 0], [-2 2], 'k:');
+        set(gca, 'XLim', [-1.1 1.1], 'YLim', [-1.1 1.1])
+
+        % plot mean directions with an overlaid arrow if desired
+        if nargin > 2 && ~isempty(varargin{1})
+            s = varargin{1};
+        else
+            s = true;
+        end
+
+        if s
+            r = circ_r(alpha);
+            phi = circ_mean(alpha);
+            hold on;
+            zm = r*exp(1i*phi);
+            plot([0 real(zm)], [0, imag(zm)],varargin{2:end})
+            % hold off;
+        end
+
+        axis square;
+        set(gca,'box','off')
+        set(gca,'xtick',[])
+        set(gca,'ytick',[])
+        text(1.2, 0, '0'); text(-.05, 1.2, '\pi/2'); 
+        text(-1.35, 0, '±\pi');  text(-.075, -1.2, '-\pi/2');
+
+
+    case 'hist'
+        % plot in  'hist style'
+        % this is essentially a wrapper for the rose plot function of matlab
+        % adds optionally the mean resultant vector
+
+        if nargin < 3|| isempty(formats)
+            formats = '-';
+        end
+
+        if nargin > 3 && ~isempty(varargin{1})
+            x = varargin{1};
+        else
+            x = 20;
+        end
+
+        [t,r] = rose(alpha,x);
+        if nargin> 3 && varargin{2}
+            p = polar(t,2*r/sum(r),formats);  % normalize histogram
+            h = polarticks(4, p);           % plot only 4 ticks in cycles
+            mr = max(2*r/sum(r));
+        else
+            p = polar(t,r,formats);           % count histogram
+            h = polarticks(4, p);           % plot only 4 ticks in cycles
+            mr = max(r);
+        end
+
+        % plot mean directions with an overlaid arrow if desired
+        if nargin > 5 && ~isempty(varargin{3})
+            s = varargin{3};
+        else
+            s = true;
+        end
+
+        if s
+            r = circ_r(alpha) * mr;
+            phi = circ_mean(alpha);
+            hold on;
+            zm = r*exp(1i*phi);
+            mean_radius = r;
+            plot([0 real(zm)], [0, imag(zm)],varargin{4:end})
+            % hold off;
+        end
+
+
+    otherwise
+        if nargin < 3
+            formats = 'o';
+        end
+        polar(alpha, ones(size(alpha)), formats);
+end
+
+axis_handle = gca;
+
+end
+%% ************************************************************************
+function text_handles = polarticks (spokes, keep_lines, handle) 
+% text_handles = polarticks (spokes, keep_lines, handle) 
+%
+%   Polar Plots in Matlab are hard coded to have radii at 30 deg intervals and do not allow for 
+%     easy adjustment of xtick intervals.  This function circumvents this issues by changing the
+%     circumference tick intervals, labels, and dotted spokes on any previously-created polar plot. 
+%
+%   INPUTS:
+%   spokes = number of equally spaced ticks (radii) around the circumference starting at 0deg. 
+%            Must be an even integer. 
+%   keep_lines = a vector of handles of plotted lines to keep on the polar plot.
+%            Note that if these changes are made before plotting any lines, 
+%            this vector can just be empty [].
+%   handle = the polar plot figure handle (optional; default is gca)
+%
+%   OUTPUT:
+%   text_handles = the handles for the ticklabels 
+%
+%   Lastly, the 'y-ticks' references are marked at the circumference and midpoints.
+%
+%   Example:  
+%           p = polar ((pi/180) .* [0:45:360], [25 5 25 5 25 5 25 5 25]);	%here's your pre-established polarplot
+%           h = polarticks(8, p);	%where 8 = 8 radii (therefore, every 45 deg)
+% Danz, 140330
+% adam.danz%gmail.com
+% Copyright (c) 2014, Adam Danz
+% All rights reserved.
+% http://www.mathworks.com/matlabcentral/fileexchange/46087-polarticks-m
+if nargin < 3 || isempty(handle)
+    handle = gca; end
+if mod(spokes,2) ~= 0
+    error ('Number of spokes needs to be an even integer');  %'spokes' are actually diameters.
+end
+    
+% remove dotted radii and tickmarks and lables (actuall, all text)
+h = findall(handle,'type','line');          %get handles for all lines in polar plot
+h(ismember(h,keep_lines))=[];               %remove handles of plotted lines
+delete (h)
+t = findall(handle,'type','text');          %get handles for all text in polar plot
+delete (t)
+% add my own tick marks  (this section is adapted from the actual polar.m code
+        % plot spokes
+        th = (1 : spokes/2) * 2 * pi / spokes;
+        cst = cos(th);
+        snt = sin(th);
+        cs = [-cst; cst];
+        sn = [-snt; snt];
+        v = [get(handle, 'XLim') get(handle, 'YLim')];
+        rmax = v(2);
+        ls = get(handle, 'GridLineStyle');
+        tc = get(handle, 'XColor');
+        line(rmax * cs, rmax * sn, 'LineStyle', ls, 'Color', tc,  'LineWidth', 1, ...
+            'HandleVisibility', 'off', 'Parent', handle);
+        
+        % annotate spokes ticks %*% adjust text x,y position to avoid
+        % overlap with the circle
+        rt = 1.1 * rmax;
+        % degint = 360/spokes; % in degrees <-- original
+        degint = 1/spokes;  % in cycles <-- modification
+        for i = 1 : length(th)
+            t_hand1(i) = text(rt * cst(i), rt * snt(i), num2str(i * degint),...
+                'HorizontalAlignment', 'center', 'FontSize',11,...
+                'HandleVisibility', 'off', 'Parent', handle);
+            if i == length(th)
+                loc = num2str(0);
+            else
+                loc = num2str(0.5 + i * degint);
+            end
+            t_hand2(i) = text(-rt * cst(i), -rt * snt(i), loc, 'HorizontalAlignment', 'center', ...
+                'HandleVisibility', 'off', 'Parent', handle,'FontSize',11);
+        end
+        
+        % set view to 2-D
+        view(handle, 2);
+        % set axis limits
+        axis(handle, rmax * [-1, 1, -1.15, 1.15]);
+        
+        % text handle outputs
+        text_handles = [t_hand1, t_hand2];
+        
+        % add 'y axis' labels to polar plot  (labels will always be between last two xticks)
+            % outer circumference y val
+            tx1 = get(text_handles(spokes), 'Position');      %text position of last xtick marker
+            tx2 = get(text_handles(spokes-1), 'Position');    %text position of 2nd-last xtick marker
+            circloc = [((tx1(1)-tx2(1))/2)+tx2(1) , ((tx1(2)-tx2(2))/2)+tx2(2)];        %location of midline between these two points.
+            xlimmax = max(get(gca, 'xlim'));
+            a0  = ((xlimmax^2)/(1+(( circloc(2)/circloc(1))^2)))^(1/2);            %adjust for circumference
+            b0 = (circloc(2)/circloc(1)) * a0;
+            % text (a0, b0, num2str(xlimmax), 'FontSize', 8);% commented off
+            %add inner circumference and 1/2 point
+            hold on
+            polar(deg2rad([0:1:359]),repmat(ceil(xlimmax/2),[1,360]),'-.k');
+            slope = circloc(2)/circloc(1);
+            hyp = xlimmax/2;
+            a = ((hyp^2)/(1+(slope^2)))^(1/2);
+            b = slope*a;
+            % text(a,b,num2str(hyp),'FontSize', 8); % commented off
+            hold off
+        
+end
+% Redistribution and use in source and binary forms, with or without
+% modification, are permitted provided that the following conditions are
+% met:
+% 
+%     * Redistributions of source code must retain the above copyright
+%       notice, this list of conditions and the following disclaimer.
+%     * Redistributions in binary form must reproduce the above copyright
+%       notice, this list of conditions and the following disclaimer in
+%       the documentation and/or other materials provided with the distribution
+% 
+% THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+% AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+% IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+% ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+% LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+% CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+% SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+% INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+% CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+% ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+% POSSIBILITY OF SUCH DAMAGE.
+%%*************************************************************************
+
