@@ -40,6 +40,8 @@ framerate = 500;            % video framerate = sampling frequency
 tsmooth = 25;                    % smoothing by 25 ms (40 Hz, 12.5 frames)
 % using a quadratic running fit
 % reduce tsmooth if stride frequencies > 20 Hz
+detrend_polyorder = 2;      % polynomial order for detrending data: 0 = constant
+% 1 = linear; 2 = quadratic, etc.
 
 %% read in track data
 
@@ -63,26 +65,44 @@ track_coords = readcell(trackfilename);
 % parse into specific variables
 % remove header (row 1)
 track_coords(1,:) = [];
+% convert to numerical
+track_coords = cell2mat(track_coords);
 %% extract tracks for each tracked landmark
-% COM is fixed at the image center in the body-fixed frame
-COM = cell2mat(track_coords(:,1:2));
-% Head = cell2mat(track_coords(:,3:4));    
-% Caudal = cell2mat(track_coords(:,5:6));
+% for computing phase, COM needs to be fixed at the image center in the 
+% body-fixed frame;  use to correct foot x,y if necessary later
+COM = track_coords(:,1:2);
+% Head = track_coords(:,3:4);    % not needed
+% Caudal = track_coords(:,5:6);  % not needed
 nframes = size(track_coords,1);
-
+% find all rows that are all NaN so we can ignore:
+idx_nan = all(isnan(track_coords),2);
+diff_idx_nan = diff(idx_nan);
+numNaNstart = find(diff_idx_nan == -1);
+if isempty(numNaNstart) % no all NaN rows at start
+    firstframe = 1;
+else
+    firstframe = numNaNstart(1) + 1; % in case more than one sequence
+end
+numNaNend = find(diff_idx_nan == 1);
+if isempty(numNaNend) % no all NaN rows at start
+    lastframe = nframes - firstframe + 1;
+else
+    lastframe = numNaNend(end); % in case more than one sequence
+end
 %% input analysis parameters
 prompt = {'leg motion smoothing window(ms)',...
-    'framerate(frame/s)', ...
+    'framerate(frame/s)', 'detrend polynomial order',...
     'tracked +y points up/down (1=Y,0=N)'};
 dlgtitle = 'Analysis parameters';
 fieldsize = [1 40];
-definput = {num2str(tsmooth),num2str(framerate),'1','0'};
+definput = {num2str(tsmooth),num2str(framerate),num2str(detrend_polyorder),'1'};
 
 answer = inputdlg(prompt,dlgtitle,fieldsize,definput);
 
-tsmooth         = str2num(answer{1});
-framerate       = str2num(answer{2});
-switch_y_dir    = ~str2num(answer{3});
+tsmooth             = str2num(answer{1});
+framerate           = str2num(answer{2});
+detrend_polyorder   = str2num(answer{3});
+switch_y_dir       = ~str2num(answer{4});
 
 dt = 1/framerate;                           % time step
 smoothwindow = ceil(tsmooth*1e-3/dt);       % smoothing window for foot motion
@@ -90,7 +110,7 @@ smoothwindow = ceil(tsmooth*1e-3/dt);       % smoothing window for foot motion
 %% process foot motions
 
 % get original foot positions in the body fixed frame:
-FootXY = cell2mat(track_coords(:,7:end));
+FootXY = track_coords(:,7:end);
 % number of legs = number of xy columns/2
 Nlegs = round(size(FootXY,2))/2;
 % ------------------
@@ -124,10 +144,17 @@ end
 % foot along the cranial-caudal axis in the body fixed frame
 Footy_cc(:,:) = FootXY(:,2,:);
 
+% Because the legs can be held at somewhat different mean positions for
+% different motions, we first detrend the y values; this allows for correct
+% normalization of y when computing phases; this removes a long-time value
+% of speed that isn't relevant for phase calculations.
+Footy_cc(firstframe:lastframe,j) = detrend(Footy_cc(firstframe:lastframe,j),detrend_polyorder);
+
 %% compute velocity along the +y cranial-caudal direction for each leg
 % using quadratic polynomial local fits
 for j = 1:Nlegs
-    FootvY_cc(:,j) = movingslope(FootXY(:,2,j),smoothwindow,polyorder,dt);
+    FootvY_cc(firstframe:lastframe,j) = ...
+        movingslope(FootXY(firstframe:lastframe,2,j),smoothwindow,polyorder,dt);
 end
 
 %% plot y and vy vs time
@@ -137,11 +164,15 @@ while keepgoing
     tiledlayout(Nlegs,2,'TileSpacing','compact','Padding','compact');
     for j = 1:Nlegs
         nexttile;
-        plot(1:nframes,normalize(Footy_cc(:,j)));
-        ylabel(['y leg ',num2str(j)]);
+        plot(firstframe:lastframe,normalize(Footy_cc(firstframe:lastframe,j)));
+        hold on;
+        ylabel(['y leg ',num2str(j)]); 
+        plot([firstframe,lastframe],[0,0],'k-');
         nexttile;
-        plot(1:nframes,normalize(FootvY_cc(:,j)));
-        ylabel(['v_y leg ',num2str(j)]);
+        plot(firstframe:lastframe,normalize(FootvY_cc(firstframe:lastframe,j)));
+        hold on;
+        ylabel(['v_y leg ',num2str(j)]); 
+        plot([firstframe,lastframe],[0,0],'k-');
     end
     xlabel('frame');
     % select whether or not to compute using a limited range of the input
@@ -156,18 +187,12 @@ while keepgoing
             prompt = {'first frame:','last frame:'};
             dlgtitle = 'Data must be oscillatory for phase differences to make sense';
             fieldsize = [1 40];
-            definput = {num2str(1),num2str(nframes)};
+            definput = {num2str(firstframe),num2str(lastframe)};
 
             answer = inputdlg(prompt,dlgtitle,fieldsize,definput);
-
+            % only compute phase differences for these frames
             firstframe      = str2num(answer{1});
             lastframe       = str2num(answer{2});
-            % select only frames of interest where the data is oscillatory
-            if firstframe ~= 1 || lastframe ~= nframes
-                Footy_cc    = Footy_cc(firstframe:lastframe,:);
-                FootvY_cc   = FootvY_cc(firstframe:lastframe,:);
-            end
-            nframes = size(Footy_cc,1);
             clf;
         otherwise
             keepgoing = 0;
@@ -191,8 +216,8 @@ for j = 1:Nlegs
     % 
     % Here we use normalize so y and vy have zero mean, unit stdev 
 
-    osc_phase(:,j) = atan2(-normalize(FootvY_cc(:,j)),...
-        normalize(Footy_cc(:,j)));
+    osc_phase(:,j) = atan2(-normalize(FootvY_cc(firstframe:lastframe,j)),...
+        normalize(Footy_cc(firstframe:lastframe,j)));
 
     % the range for atan2 0 to +pi, then -pi to 0, but we need all positive
     % values [0, 2pi]
@@ -225,9 +250,7 @@ end
 % cycles; if the phase difference is > 1, then subtract 1 from it
 for j = 1:(Nlegs-1)
     temp = osc_phase_diff(:,j);
-    temp(temp < 0) = 1 + temp(temp < 0);
-    temp(temp > 1) = temp(temp > 1) - 1;
-    osc_phase_diff(:,j) = temp;
+    osc_phase_diff(:,j) = mod(temp,1);
 end
 
 %% save oscillation phase differences between adjoining intact legs 
@@ -237,8 +260,9 @@ header = {};
 for j = 1:(Nlegs-1)
     header = [header ['phase diff ',num2str(j),'(cycle)']];
 end
+header = [header 'frame'];
 
-outputarray = num2cell(osc_phase_diff);
+outputarray = num2cell([osc_phase_diff (firstframe:lastframe)']);
 outputarray = [header; outputarray];
 
 % write phase differences to file
